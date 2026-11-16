@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Kaart met laadmelding</title>
+
+  <link rel="stylesheet" href="https://js.arcgis.com/4.31/esri/themes/light/main.css" />
+  <script src="https://js.arcgis.com/4.31/"></script>
+
+  <style>
+    html, body, #viewDiv { margin: 0; padding: 0; height: 100%; width: 100%; }
+
+    #laadmelding {
+      position: absolute;
+      inset: 0;
+      z-index: 10;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      background: rgba(255, 255, 255, 0.85);
+      font-family: Arial, sans-serif;
+      font-size: 14px;
+      color: #222;
+      transition: opacity 0.25s ease;
+    }
+    #laadmelding.verborgen {
+      opacity: 0;
+      pointer-events: none;   /* kaart blijft bedienbaar als de melding weg is */
+    }
+    .spinner {
+      width: 36px; height: 36px;
+      border: 4px solid #D0D0D0;
+      border-top-color: #2F80ED;
+      border-radius: 50%;
+      animation: draai 0.9s linear infinite;
+    }
+    @keyframes draai { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div id="viewDiv"></div>
+
+  <div id="laadmelding">
+    <div class="spinner"></div>
+    <div id="laadtekst">Kaart met labels wordt geladen, even geduld…</div>
+  </div>
+
+  <script>
+    // ================================
+    // INSTELLINGEN
+    // ================================
+    // Webmap-ID: standaard hieronder, of via de URL: ...html?id=<webmap-id>
+    var STANDAARD_WEBMAP_ID = "a011f3607ce341feb58a00c3463f50a0";
+
+    // true  = melding ook tonen na pannen/zoomen (met korte vertraging)
+    // false = alleen bij het eerste laden
+    var TOON_BIJ_VERVERSEN = true;
+
+    // Melding verbergen na deze tijd, ook als de kaart nog "updating" meldt
+    var MAX_WACHTTIJD_MS = 60000;
+
+    // Bij verversen pas tonen als het langer duurt dan dit (voorkomt geflikker)
+    var VERTRAGING_MS = 400;
+
+    // ================================
+    // CODE
+    // ================================
+    var melding = document.getElementById("laadmelding");
+    var tekst = document.getElementById("laadtekst");
+
+    function toon(bericht) {
+      if (bericht) { tekst.textContent = bericht; }
+      melding.classList.remove("verborgen");
+    }
+    function verberg() {
+      melding.classList.add("verborgen");
+    }
+
+    var params = new URLSearchParams(window.location.search);
+    var webmapId = params.get("id") || STANDAARD_WEBMAP_ID;
+
+    (async function () {
+      var modules = await $arcgis.import([
+        "@arcgis/core/WebMap.js",
+        "@arcgis/core/views/MapView.js",
+        "@arcgis/core/core/reactiveUtils.js"
+      ]);
+      var WebMap = modules[0];
+      var MapView = modules[1];
+      var reactiveUtils = modules[2];
+
+      var webmap = new WebMap({ portalItem: { id: webmapId } });
+      var view = new MapView({ container: "viewDiv", map: webmap });
+
+      // Vangnet: na de maximale wachttijd altijd verbergen
+      var vangnet = setTimeout(verberg, MAX_WACHTTIJD_MS);
+
+      try {
+        // 1. Webmap en view zijn klaar
+        await view.when();
+        // 2. Alle lagen en labels zijn getekend
+        await reactiveUtils.whenOnce(function () { return !view.updating; });
+      } catch (fout) {
+        console.error("Kaart laden mislukt:", fout);
+        toon("De kaart kon niet worden geladen.");
+        clearTimeout(vangnet);
+        return;
+      }
+
+      clearTimeout(vangnet);
+      verberg();
+
+      // Optioneel: melding ook tonen bij pannen/zoomen
+      if (TOON_BIJ_VERVERSEN) {
+        var timer = null;
+        reactiveUtils.watch(
+          function () { return view.updating; },
+          function (bezig) {
+            if (bezig) {
+              timer = setTimeout(function () {
+                toon("Kaart wordt bijgewerkt…");
+              }, VERTRAGING_MS);
+            } else {
+              clearTimeout(timer);
+              verberg();
+            }
+          }
+        );
+      }
+    })();
+  </script>
+</body>
+</html>
